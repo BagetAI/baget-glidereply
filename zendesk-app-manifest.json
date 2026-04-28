@@ -1,0 +1,20 @@
+{
+  "name": "GlideReply AI Copilot",
+  "author": {
+    "name": "GlideReply Engineering",
+    "email": "samuel@baget.ai",
+    "url": "https://baget-glidereply.vercel.app"
+  },
+  "defaultLocale": "en",
+  "private": true,
+  "location": {
+    "support": {
+      "ticket_sidebar": {
+        "url": "https://baget-glidereply.vercel.app/zendesk/sidebar",
+        "flexible": true
+      }
+    }
+  },
+  "version": "1.0.0",
+  "frameworkVersion": "2.0"
+}

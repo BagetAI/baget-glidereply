@@ -3,7 +3,7 @@ import { retrieveRelevantContext, generateDraft } from "@/lib/rag";
 
 export async function POST(req: Request) {
   try {
-    const { query } = await req.json();
+    const { query, ticketId } = await req.json();
 
     if (!query) {
       return NextResponse.json({ error: "Query is required" }, { status: 400 });
@@ -17,6 +17,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ...result,
+      ticketId,
       status: "success",
       timestamp: new Date().toISOString()
     });
