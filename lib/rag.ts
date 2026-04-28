@@ -8,11 +8,19 @@ export interface KnowledgeItem {
   tags: string;
 }
 
-export async function retrieveRelevantContext(query: string): Promise<KnowledgeItem[]> {
+export interface RetrievalResult {
+  items: (KnowledgeItem & { score: number })[];
+  confidence: number;
+}
+
+/**
+ * Retrieves relevant context and calculates a confidence score based on keyword overlap.
+ * This simulates a vector similarity search by normalizing keyword hits.
+ */
+export async function retrieveRelevantContext(query: string): Promise<RetrievalResult> {
   try {
-    // Fetch all rows from the knowledge base database
     const response = await fetch(`https://stg-app.baget.ai/api/public/databases/${DB_ID}/rows`);
-    if (!response.ok) return [];
+    if (!response.ok) return { items: [], confidence: 0 };
     
     const rows = await response.json();
     const data = rows.map((r: any) => r.data) as KnowledgeItem[];
@@ -20,7 +28,8 @@ export async function retrieveRelevantContext(query: string): Promise<KnowledgeI
     const queryLower = query.toLowerCase();
     const keywords = queryLower.split(/\s+/).filter(w => w.length > 2);
     
-    // Scoring logic for retrieval
+    if (keywords.length === 0) return { items: [], confidence: 0 };
+
     const scored = data.map(item => {
       let score = 0;
       const content = item.content.toLowerCase();
@@ -29,80 +38,75 @@ export async function retrieveRelevantContext(query: string): Promise<KnowledgeI
 
       keywords.forEach(word => {
         if (content.includes(word)) score += 2;
-        if (tags.includes(word)) score += 5; // Tags have higher weight
+        if (tags.includes(word)) score += 5; 
         if (type.includes(word)) score += 1;
       });
 
-      return { item, score };
+      // Normalize score based on potential max (if all keywords were in tags - simplified)
+      const maxPossibleScore = keywords.length * 5;
+      const normalizedScore = Math.min(score / maxPossibleScore, 1.0);
+
+      return { ...item, score: normalizedScore };
     });
 
-    return scored
+    const filtered = scored
       .filter(s => s.score > 0)
       .sort((a, b) => b.score - a.score)
-      .slice(0, 3)
-      .map(s => s.item);
+      .slice(0, 3);
+
+    // Overall confidence is the score of the top match
+    const confidence = filtered.length > 0 ? filtered[0].score : 0;
+
+    return {
+      items: filtered,
+      confidence: parseFloat(confidence.toFixed(2))
+    };
   } catch (error) {
     console.error("Retrieval error:", error);
-    return [];
+    return { items: [], confidence: 0 };
   }
 }
 
-export async function generateDraft(query: string, context: KnowledgeItem[]) {
-  if (context.length === 0) {
+/**
+ * Generates a draft using the retrieved context. 
+ * Includes verifiable citations and handles the prompt grounding.
+ */
+export async function generateDraft(query: string, retrieval: RetrievalResult) {
+  const { items, confidence } = retrieval;
+
+  if (items.length === 0) {
     return {
-      draft: "I've searched our documentation and past tickets but couldn't find a definitive answer for this specific query. I am flagging this for a senior agent to review and provide a personalized response.",
-      citations: []
+      draft: "I've searched our internal documentation and past tickets, but I couldn't find a high-confidence match for this specific query. I've flagged this for agent review to ensure we provide an accurate technical solution.",
+      confidence_score: 0,
+      sources: []
     };
   }
 
-  // Simulate a high-quality LLM prompt and response
-  const topMatch = context[0];
+  const topMatch = items[0];
   const queryLower = query.toLowerCase();
   
-  let personalizedDraft = "";
+  // Simulation of LLM generation with specific source grounding
+  let draftText = "";
 
   if (queryLower.includes("slack")) {
-    personalizedDraft = `Hi there,
-
-Thanks for reaching out! I understand you're having trouble connecting to Slack. 
-
-According to our records, this is usually due to permission settings. Please ensure that your Slack workspace administrator has approved the GlideReply app in your Slack App Directory. Additionally, verify that the 'channels:read' scope is enabled in your integration settings.
-
-You can find more details here: ${topMatch.source_url}
-
-Let me know if this helps!`;
+    draftText = `Hi, I see you're having trouble with the Slack connection. Based on our historical resolutions, please check if your Slack admin has approved the GlideReply app and verify the 'channels:read' scope is active.`;
   } else if (queryLower.includes("password")) {
-    personalizedDraft = `Hello! 
-
-I'm sorry to hear you're having trouble with your password. To reset it, please head to the login page and click the 'Forgot Password' link. You'll receive an email with a reset link—just keep in mind that the link expires after 15 minutes for security reasons.
-
-Detailed guide: ${topMatch.source_url}
-
-Best regards,
-Support Team`;
-  } else if (queryLower.includes("tone") || queryLower.includes("voice")) {
-    personalizedDraft = `Hi! 
-
-Great question. GlideReply offers custom tone-of-voice settings for Growth and Enterprise plans. You can adjust this in your Dashboard under Settings > Brand Voice. We currently support Professional, Friendly, and Concise modes to match your brand's personality.
-
-Check out the configuration guide: ${topMatch.source_url}`;
+    draftText = `Hello! To reset your password, please use the 'Forgot Password' link on the login page. Note that the reset link sent via email is valid for 15 minutes.`;
   } else {
-    // Generic high-quality draft
-    personalizedDraft = `Hi,
-
-Thanks for your message regarding ${query.split(' ').slice(0, 5).join(' ')}...
-
-Based on our ${topMatch.source_type}, I recommend the following:
-
-${topMatch.content}
-
-For more information, please see: ${topMatch.source_url}
-
-Hope this helps!`;
+    // Grounded generation from retrieved content
+    draftText = `Based on our ${topMatch.source_type}, here is the recommended resolution: ${topMatch.content.split('.')[0]}.`;
   }
 
+  // Formatting sources for the API response
+  const sources = items.map(item => ({
+    type: item.source_type,
+    url: item.source_url,
+    relevance: parseFloat(item.score.toFixed(2))
+  }));
+
   return {
-    draft: personalizedDraft,
-    citations: context.map(c => c.source_url)
+    draft: draftText,
+    confidence_score: confidence,
+    sources: sources
   };
 }
